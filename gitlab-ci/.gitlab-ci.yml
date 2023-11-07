@@ -1,0 +1,105 @@
+image: alpine:3.18.4
+
+variables:
+   DEV_CONTAINER_IMAGE: ${CI_REGISTRY_IMAGE}/${CI_COMMIT_BRANCH}:${CI_COMMIT_SHORT_SHA}
+   RELEASE_CONTAINER_IMAGE: ${PRIVATE_CONTAINER_REGISTRY}/${PRIVATE_CONTAINER_REGISTRY_IMAGE}
+
+workflow:
+   rules:
+      - if: "$CI_COMMIT_BRANCH"
+
+stages:
+   - get-version
+   - build-container-image
+   - run-tests
+   - push-to-private-registry
+   - create-tag
+
+get-version:
+   stage: get-version
+   script:
+      - |
+         apk update
+         apk add --no-cache git
+      - sh ./helper-scripts/generate_version_id.sh > version_number.txt
+      - echo "New version number is - `cat version_number.txt`"
+   artifacts:
+      when: always
+      paths:
+         - version_number.txt
+      expire_in: 1 day
+
+build-container-image:
+   stage: build-container-image
+   image:
+      name: gcr.io/kaniko-project/executor:v1.17.0-debug
+      entrypoint: [""]
+   script:
+      - mkdir -p /kaniko/.docker
+      - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+      - /kaniko/executor  --context "${CI_PROJECT_DIR}" --dockerfile "${CI_PROJECT_DIR}/Dockerfile" --destination "${DEV_CONTAINER_IMAGE}"
+   dependencies:
+      - "get-version"
+   artifacts:
+      when: always
+      paths:
+         - version_number.txt
+      expire_in: 1 day
+
+run-tests:
+   stage: run-tests
+   image: ${DEV_CONTAINER_IMAGE}
+   script:
+      - echo "Run some tests."
+   needs:
+      - job: "build-container-image"
+        artifacts: true
+   artifacts:
+      when: always
+      paths:
+         - version_number.txt
+      expire_in: 1 day
+
+push-to-private-registry:
+   stage: push-to-private-registry
+   image:
+      name: gcr.io/go-containerregistry/crane/debug:latest
+      entrypoint: [""]
+   before_script:
+      - export RELEASE_VERSION_ID=$(cat version_number.txt)
+   script:
+      - crane auth login --username ${PRIVATE_CONTAINER_REGISTRY_USER} --password ${PRIVATE_CONTAINER_REGISTRY_PASSWORD} ${PRIVATE_CONTAINER_REGISTRY}
+      - crane cp ${DEV_CONTAINER_IMAGE} ${RELEASE_CONTAINER_IMAGE}:${RELEASE_VERSION_ID}
+   needs:
+      - job: "run-tests"
+        artifacts: true
+   artifacts:
+      when: always
+      paths:
+         - version_number.txt
+      expire_in: 1 day
+   only:
+      - /^v+\d+\.+\d+\.+\d+$/
+      - main
+
+create-tag:
+   stage: create-tag
+   before_script:
+      - export RELEASE_VERSION_ID=$(cat version_number.txt)
+   script:
+      - |
+         apk update
+         apk add --no-cache curl
+      - echo "Creating tag - ${RELEASE_VERSION_ID}"
+      - sh ./helper-scripts/release_version_id.sh "${RELEASE_VERSION_ID}" "${PROJECT_ACCESS_TOKEN}"
+   needs:
+      - job: "push-to-private-registry"
+        artifacts: true
+   artifacts:
+      when: always
+      paths:
+         - version_number.txt
+      expire_in: 1 day
+   only:
+      - /^v+\d+\.+\d+\.+\d+$/
+      - main

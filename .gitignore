@@ -1,0 +1,23 @@
+#
+# .gitignore file - Ignore everything and recursive allow them.
+#
+
+#
+# Ignore everything.
+#
+*
+
+#
+# Recursive allow.
+#
+!.gitignore
+!.dockerignore
+!Dockerfile
+!README.md
+!requirements.txt
+!gitlab-ci
+!gitlab-ci/helper-scripts
+!gitlab-ci/helper-scripts/release_version_id.sh
+!gitlab-ci/helper-scripts/generate_version_id.sh
+!gitlab-ci/README.md
+!gitlab-ci/.gitlab-ci.yml
